@@ -57,7 +57,7 @@ router.post("/", checkForm("id", "pw", "birth", "myName", "tel"), checkSame("pw"
 
 
 // 로그인 기능
-router.post("/login", isLogout, checkDuplicateLogin, checkForm("id", "pw"), async (req, res, next) => {
+router.post("/login", checkDuplicateLogin, checkForm("id", "pw"), async (req, res, next) => {
     //logIn에서 값 가져옴
     const { id, pw } = req.body;
     const sessionMap = new Map();
@@ -98,7 +98,6 @@ router.post("/login", isLogout, checkDuplicateLogin, checkForm("id", "pw"), asyn
         }
 
         sessionMap.set(req.session.userId, req.session);
-
         res.locals.mySessionMap = sessionMap;
 
         result.success = true;
