@@ -6,6 +6,7 @@ const { checkBlank } = require("../middlewares/checkBlank")
 const { isLogin } = require("../middlewares/isLogin")
 const { isLogout } = require("../middlewares/isLogout")
 const { executeSQL } = require("../modules/sql")
+const { checkDuplicateLogin } = require("../middlewares/checkDuplicateLogin")
 
 const {loggingMiddleware} = require("../config/mongoDB")
 // 로깅 미들웨어
@@ -54,10 +55,12 @@ router.post("/", checkForm("id", "pw", "birth", "myName", "tel"), checkSame("pw"
    }
 })
 
+
 // 로그인 기능
-router.post("/login", isLogout, checkForm("id", "pw"), async (req, res, next) => {
+router.post("/login", isLogout, checkDuplicateLogin, checkForm("id", "pw"), async (req, res, next) => {
     //logIn에서 값 가져옴
     const { id, pw } = req.body;
+    const sessionMap = new Map();
 
     // 프론트에 전달할 값 미리 만들기
     const result = {
@@ -80,6 +83,7 @@ router.post("/login", isLogout, checkForm("id", "pw"), async (req, res, next) =>
 
         const user = dbResult[0];
 
+        console.log(user.pk_idx)
         // 세션 등록
         req.session.userIdx = user.pk_idx;
         req.session.userId = user.id;
@@ -93,12 +97,15 @@ router.post("/login", isLogout, checkForm("id", "pw"), async (req, res, next) =>
             req.session.userAdminn = false;
         }
 
+        sessionMap.set(req.session.userId, req.session);
+
+        res.locals.mySessionMap = sessionMap;
+
         result.success = true;
         result.message = "로그인에 성공했습니다.";
         result.data = dbResult
 
         res.locals.result = result;
-        // await loggingMiddleware(req, res, next);
         
         res.send(result)
     }catch(e){

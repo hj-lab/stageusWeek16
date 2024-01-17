@@ -1,4 +1,4 @@
-const { error } = require("console");
+// const { error } = require("console");
 const { idPattern, pwPattern, namePattern, birthPattern, telPattern } = require("../config/regularExpression")
 
 function checkForm(...values){
