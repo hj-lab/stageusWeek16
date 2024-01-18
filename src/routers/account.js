@@ -57,7 +57,7 @@ router.post("/", checkForm("id", "pw", "birth", "myName", "tel"), checkSame("pw"
 
 
 // 로그인 기능
-router.post("/login", checkDuplicateLogin, checkForm("id", "pw"), async (req, res, next) => {
+router.post("/login", checkForm("id", "pw"), async (req, res, next) => {
     //logIn에서 값 가져옴
     const { id, pw } = req.body;
     const sessionMap = new Map();
@@ -83,7 +83,6 @@ router.post("/login", checkDuplicateLogin, checkForm("id", "pw"), async (req, re
 
         const user = dbResult[0];
 
-        console.log(user.pk_idx)
         // 세션 등록
         req.session.userIdx = user.pk_idx;
         req.session.userId = user.id;
@@ -97,8 +96,51 @@ router.post("/login", checkDuplicateLogin, checkForm("id", "pw"), async (req, re
             req.session.userAdminn = false;
         }
 
-        sessionMap.set(req.session.userId, req.session);
-        res.locals.mySessionMap = sessionMap;
+
+        // 현재 등록된 세션 리스트 가져오기
+        req.sessionStore.all((err, sessionList) => {
+            if (err) {
+                return next(Error("sessionStore Error"))
+            }
+
+            // 등록된 세션 중에서 특정 조건을 만족하는 세션 찾기
+            for (const sessionId  in sessionList) {
+                const sessionData = sessionList[sessionId];
+                if (sessionData.userIdx === req.session.userIdx) {
+                    // sessionId번째 세션 삭제
+                    req.sessionStore.destroy(sessionId, (err) => {
+                        if (err) {
+                            // return next(Error("중복 로그인 세션 삭제 중 error"))
+                            console.error('Error destroying session:', destroyErr);
+                        }
+                        else {
+                            console.log("중복 로그인 세션 삭제 성공");
+                        }
+                    });
+
+                    break;
+                }
+            }
+
+            // for(var i=0; i<sessionList.length; i++){
+            //     const sessionData = sessionList[i]
+            //     if(sessionData.userIdx == req.session.userIdx){
+            //         console.log("중복로그인 감지")
+            //         req.sessionStore.destroy(i, (err) =>{
+            //             if(err){
+            //                 return new Error("중복 로그인 세션 삭제 중 Error")
+            //             }
+            //             else{
+            //                 console.log("중복 로그인에 대한 기존 세션 삭제 성공")
+            //             }
+            //         })
+            //     }
+            // }
+
+        });
+
+        // sessionMap.set(req.session.userId, req.session);
+        // res.locals.mySessionMap = sessionMap;
 
         result.success = true;
         result.message = "로그인에 성공했습니다.";
