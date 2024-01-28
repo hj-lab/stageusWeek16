@@ -6,6 +6,7 @@ const { checkBlank } = require("../middlewares/checkBlank")
 const { executeSQL } = require("../modules/sql")
 const { isLogin } = require("../middlewares/isLogin")
 const { isLogout } = require("../middlewares/isLogout")
+const { uuid } = require("../modules/uuid")
 
 const {loggingMiddleware} = require("../config/mongoDB")
 // 로깅 미들웨어
@@ -20,6 +21,7 @@ const conn = require("../config/database");
 router.post("/", isLogin, checkBlank("content", "boardIdx"), async(req, res, next) =>{
     // 글 내용 받아오기
     const {content, boardIdx} = req.body
+    const myIdx = res.locals.nowIdx;
 
     // 프론트에 전달할 값 미리 만들기
     const result = {
@@ -31,7 +33,7 @@ router.post("/", isLogin, checkBlank("content", "boardIdx"), async(req, res, nex
         // comment table에 등록
         const sql = `INSERT INTO comment_schema.comment (fk_board_idx, fk_account_idx, content)
                      VALUES ($1, $2, $3)`;
-        const values = [boardIdx, req.session.userIdx, content];
+        const values = [boardIdx, myIdx, content];
 
         await executeSQL(conn, sql, values);
        
@@ -51,8 +53,8 @@ router.post("/", isLogin, checkBlank("content", "boardIdx"), async(req, res, nex
 
 // 댓글 읽기 기능
 router.get("/", isLogin, checkBlank("boardIdx"), async(req, res, next) => {
-    // 세션값 받아오기
-    const sessionIdx = req.session.userIdx;
+    // isLogin에서 현재 나의 idx 받아옴
+    const myIdx = res.locals.nowIdx;
     // 읽고자 하는 댓글이 있는 게시글의 idx 가져옴
     const {boardIdx} = req.body;
 
@@ -77,7 +79,7 @@ router.get("/", isLogin, checkBlank("boardIdx"), async(req, res, next) => {
 
         result.data = dbResult.map(comment => ({
             ...comment,
-            isMine: comment.fk_account_idx === sessionIdx
+            isMine: comment.fk_account_idx === myIdx
         }));
 
         res.locals.result = result;
@@ -95,7 +97,7 @@ router.put("/:idx", isLogin, checkBlank("idx", "content"), async(req, res, next)
     // 수정하고자 하는 댓글의 pk_idx 가져옴
     const commentIdx = req.params.idx;
     const {content}  = req.body;
-    const myIdx = req.session.userIdx;
+    const myIdx = res.locals.nowIdx;
 
     // 프론트에 전달할 값 미리 만들기
     const result = {
@@ -131,7 +133,7 @@ router.put("/:idx", isLogin, checkBlank("idx", "content"), async(req, res, next)
 // 댓글 삭제 기능 - path parameter
 router.delete("/:idx", isLogin, checkBlank("idx"), async(req, res, next) => {
     const commentIdx = req.params.idx;
-    const myIdx = req.session.userIdx;
+    const myIdx = req.res.locals.nowIdx;
 
     // 프론트에 전달할 값 미리 만들기
     const result = {

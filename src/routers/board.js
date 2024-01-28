@@ -6,6 +6,7 @@ const { checkBlank } = require("../middlewares/checkBlank")
 const { executeSQL } = require("../modules/sql")
 const { isLogin } = require("../middlewares/isLogin")
 const { isLogout } = require("../middlewares/isLogout")
+const { uuid } = require("../modules/uuid")
 
 const {loggingMiddleware} = require("../config/mongoDB")
 // 로깅 미들웨어
@@ -18,6 +19,7 @@ const conn = require("../config/database");
 
 // 게시글 쓰기 기능
 router.post("/", isLogin, checkBlank("title", "content"), async(req, res, next) =>{
+    const myIdx = res.locals.nowIdx;
     // 글 내용 받아오기
     const {title, content} = req.body
 
@@ -28,12 +30,10 @@ router.post("/", isLogin, checkBlank("title", "content"), async(req, res, next) 
     };
 
     try{
-        const userIdx = req.session.userIdx;
-
         // INSERT를 하면서 방금 insert한 것의 pk_idx (serial) 값 반환
         const sql = `INSERT INTO board_schema.board (fk_account_idx, title, content)
                      VALUES ($1, $2, $3)`;
-        const values = [userIdx, title, content];
+        const values = [myIdx, title, content];
 
         await executeSQL(conn, sql, values);
        
@@ -91,14 +91,13 @@ router.get("/all", isLogin, async(req,res,next) => {
 router.get("/:idx", isLogin, checkBlank("idx"), async(req, res, next) => {
     // 클릭한 게시글의 boardnum 가져옴
     const boardIdx = req.params.idx;
-    const sessionIdx = req.session.userIdx;
+    const myIdx = res.locals.nowIdx;
     
     // 프론트에 전달할 값 미리 만들기
     const result = {
         success : false,
         message : '',
-        data : null,
-        isMine : false
+        data : null
     };
 
     try{
@@ -114,7 +113,9 @@ router.get("/:idx", isLogin, checkBlank("idx"), async(req, res, next) => {
         // 조회된 게시글 반환
         const postData = dbResult[0];
         // 내꺼인지 아닌지
-        postData.isMine = postData.fk_account_idx === sessionIdx
+        postData.isMine = postData.fk_account_idx == myIdx
+
+        console.log(postData.fk_account_idx+myIdx)
 
         result.success = true;
         result.message = "해당 게시글 조회 성공";
@@ -133,12 +134,10 @@ router.get("/:idx", isLogin, checkBlank("idx"), async(req, res, next) => {
 
 // 게시글 수정 기능 - path parameter (게시글 번호 받아와서 그거 수정)
 router.put("/:idx", isLogin, checkBlank("idx", "title", "content"), async(req, res, next) => {
-
     // modifyPost에서 수정할 title, content 가져옴
     const boardIdx = req.params.idx;
     const { title, content } = req.body;
-    const myIdx = req.session.userIdx; 
-    
+    const myIdx = res.locals.nowIdx;
 
     // 프론트에 전달할 값 미리 만들기
     const result = {
@@ -173,7 +172,7 @@ router.put("/:idx", isLogin, checkBlank("idx", "title", "content"), async(req, r
 router.delete("/:idx", isLogin, checkBlank("idx"), async(req, res, next) =>{
      // delete할 post 가져오기
      const boardIdx = req.params.idx;
-     const myIdx = req.session.userIdx;
+     const myIdx = res.locals.nowIdx;
 
      // 프론트에 전달할 값 미리 만들기
      const result = {

@@ -1,4 +1,5 @@
 const router = require("express").Router()
+const redis = require("redis").createClient()
 const { checkForm } = require("../middlewares/checkForm")
 const { checkDuplicateId } = require("../middlewares/checkDuplicateId")
 const { checkSame } = require("../middlewares/checkSame")
@@ -6,6 +7,7 @@ const { checkBlank } = require("../middlewares/checkBlank")
 const { isLogin } = require("../middlewares/isLogin")
 const { isLogout } = require("../middlewares/isLogout")
 const { executeSQL } = require("../modules/sql")
+const { uuid } = require("../modules/uuid")
 
 const {loggingMiddleware} = require("../config/mongoDB")
 // 로깅 미들웨어
@@ -59,7 +61,6 @@ router.post("/", checkForm("id", "pw", "birth", "myName", "tel"), checkSame("pw"
 router.post("/login", checkForm("id", "pw"), async (req, res, next) => {
     //logIn에서 값 가져옴
     const { id, pw } = req.body;
-    const sessionMap = new Map();
 
     // 프론트에 전달할 값 미리 만들기
     const result = {
@@ -82,44 +83,23 @@ router.post("/login", checkForm("id", "pw"), async (req, res, next) => {
 
         const user = dbResult[0];
 
-        // 세션 등록
-        req.session.userIdx = user.pk_idx;
-        req.session.userId = user.id;
-        req.session.userName = user.name;
-        req.session.userBirth = user.birth;
-        req.session.userTel = user.tel;
-        if(id === "admin"){
-            req.session.userAdmin = true;
+        const uerIdx = user.pk_idx.toString()
+
+        await redis.connect()
+
+        const isDuplicate = await redis.hGet("nowUuid", uerIdx)
+
+        if(isDuplicate){
+            console.log("중복로그인입니다.")
+            await redis.hSet("previousUuid", uerIdx, isDuplicate)
+            await redis.hDel("nowUuid", uerIdx) // 이거 왜 삭제안됨?
         }
-        else{
-            req.session.userAdminn = false;
-        }
 
-        // 현재 등록된 세션 다 가져오기
-        req.sessionStore.all((err, sessionList) => {
-            if (err) {
-                next(Error("sessionStore 사용 중 Error"))
-            }
-
-            // 로그인 시도한 userIdx가 세션에 있는지 확인
-            for (const sessionIdx in sessionList) {
-                const sessionData = sessionList[sessionIdx];
-                if (sessionData.userIdx === req.session.userIdx) {
-                    // 있으면 그 세션 삭제
-                    req.sessionStore.destroy(sessionIdx, (err) => {
-                        if (err) {
-                            next(Error("중복 로그인 세션 삭제 중 error"))
-                        }
-                        else {
-                            console.log("중복 로그인 세션 삭제 성공");
-                        }
-                    });
-
-                    break;
-                }
-            }
-
-        });
+        await redis.hSet("nowUuid", uerIdx, uuid())
+        console.log(uerIdx)
+        // 1시간 유지
+        await redis.expire("nowUuid", 3600)
+        await redis.expire("previousUuid", 3600)
 
         result.success = true;
         result.message = "로그인에 성공했습니다.";
@@ -130,28 +110,25 @@ router.post("/login", checkForm("id", "pw"), async (req, res, next) => {
         res.send(result)
     }catch(e){
         next(e)
+    }finally{
+        await redis.disconnect()
     }
 })
 
 // 로그아웃 기능 
-router.delete("/logout", isLogin, async (req, res, next) => {
+router.delete("/logout", async (req, res, next) => {
     const result = {
         success: false,
         message: ''
     };
 
     try {
-        // 세션 삭제
-        await new Promise((resolve, reject) => {
-            req.session.destroy(err => {
-                if (err) {
-                    reject(new Error("세션 삭제 오류 발생"));
-                } else {
-                    resolve();
-                }
-            });
-        });
-          
+        // user redis 삭제
+        await redis.connect()
+
+        await redis.del("nowUuid")
+        await redis.del("previousUuid")
+
         result.success = true;
         result.message = "로그아웃 되었습니다.";
 
@@ -161,6 +138,8 @@ router.delete("/logout", isLogin, async (req, res, next) => {
 
     } catch (e) {
         next(e)
+    }finally{
+        await redis.disconnect()
     }
     
 });
@@ -248,8 +227,9 @@ router.get("/find/pw", checkForm("id", "myName", "birth", "tel"), async(req, res
 })
 
 
-// 내 정보 보기 기능 - session 
+// 내 정보 보기 기능
 router.get("/", isLogin, async(req, res, next) => {
+    const nowIdx = res.locals.nowIdx;
     // 프론트에 전달할 값 미리 만들기
     const result = {
         success : false,
@@ -258,20 +238,23 @@ router.get("/", isLogin, async(req, res, next) => {
     };
 
     try{
+        await redis.connect()
+
+        const sql = "SELECT id, name, birth, tel, admin FROM account_schema.account WHERE pk_idx = $1"
+        const values = [nowIdx]
+        const dbResult = await executeSQL(conn, sql, values);
+
         result.success = true;
         result.message = "내 정보 보기 성공";
-        result.data = {
-            id : req.session.userId,
-            name : req.session.userName,
-            birth : req.session.userBirth,
-            tel : req.session.userTel
-        };
+        result.data = { dbResult };
 
         res.locals.result = result;
         res.send(result)
         
     }catch(e){
         next(e);
+    }finally{
+        await redis.disconnect();
     }
 })
 
@@ -314,7 +297,8 @@ router.get("/:idx", async(req, res, next) => {
 })
 
 // 내 정보 수정 기능 - path parameter 
-router.put("/", isLogin,checkForm("pw", "myName", "birth", "tel"), checkSame("pw", "pwCheck"), async(req, res, next) => {
+router.put("/", isLogin, checkForm("pw", "myName", "birth", "tel"), checkSame("pw", "pwCheck"), async(req, res, next) => {
+    const nowIdx = res.locals.nowIdx;
     // modifyMyInform에서 수정할 정보 가져옴
     const { pw, pwCheck, myName, birth, tel} = req.body;
 
@@ -326,26 +310,19 @@ router.put("/", isLogin,checkForm("pw", "myName", "birth", "tel"), checkSame("pw
     };
 
    try{
-        // 현재 세션 idx
-        const myIdx = req.session.userIdx;
+        await redis.connect()
 
         // db 통신 -> db data를 수정할 정보로 바꿔줌
         const sql = `UPDATE account_schema.account
                      SET pw=$1, name=$2, birth=$3, tel=$4
                      WHERE pk_idx = $5`;
-        const values = [pw, myName, birth, tel, myIdx];
+        const values = [pw, myName, birth, tel, nowIdx];
 
         await executeSQL(conn, sql, values);
 
         // 해당 사용자 정보 반환
         result.success = true;
         result.message = "정보 수정 완료";
-
-        // 세션 정보 수정
-        req.session.userPw = pw;
-        req.session.userName = myName;
-        req.session.userBirth = birth;
-        req.session.userTel = tel;
 
         res.locals.result = result;
 
@@ -358,6 +335,7 @@ router.put("/", isLogin,checkForm("pw", "myName", "birth", "tel"), checkSame("pw
 
 // 회원 탈퇴 기능 
 router.delete("/", isLogin,  async(req, res, next) =>{
+    const nowIdx = res.locals.nowIdx;
     // 프론트에 전달할 값 미리 만들기
     const result = {
         success : false,
@@ -365,22 +343,14 @@ router.delete("/", isLogin,  async(req, res, next) =>{
     };
 
     try {
-        const userIdx = req.session.userIdx; 
+        await redis.connect()
+        await redis.del("nowUuid")
+        await redis.del("previousUuid")
         
         // DB에서 사용자 정보 삭제
         const sql = "DELETE FROM account_schema.account WHERE pk_idx = $1";
-        await executeSQL(conn, sql, [userIdx]);
-
-        // 세션에서 사용자 정보 삭제
-        await new Promise((resolve, reject) => {
-            req.session.destroy(err => {
-                if (err) {
-                    reject(new Error("회원 탈퇴 삭제 오류 발생"));
-                } else {
-                    resolve();
-                }
-            });
-        });
+        const values = [ nowIdx ]
+        await executeSQL(conn, sql, values);
 
         // 삭제 성공시
         result.success = true;
